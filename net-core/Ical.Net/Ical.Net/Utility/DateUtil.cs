@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Ical.Net.DataTypes;
 using Ical.Net.Interfaces.DataTypes;
 using NodaTime;
@@ -10,6 +11,11 @@ namespace Ical.Net.Utility
 {
     internal class DateUtil
     {
+        /// <summary>
+        ///     Regex for filtering timeZone wich are not supposed to be a <see cref="TimeZoneInfo.DisplayName"/>.
+        /// </summary>
+        private static readonly Regex TimeZoneDisplayNameRegex = new Regex(@"^\(UTC[+-]\d{2}:\d{2}\)");
+
         public static IDateTime StartOfDay(IDateTime dt) => dt.AddHours(-dt.Hour).AddMinutes(-dt.Minute).AddSeconds(-dt.Second);
 
         public static IDateTime EndOfDay(IDateTime dt) => StartOfDay(dt).AddDays(1).AddTicks(-1);
@@ -137,9 +143,19 @@ namespace Ical.Net.Utility
                 return DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaZone);
             }
 
-            foreach (var providerId in DateTimeZoneProviders.Serialization.Ids.Where(tzId.Contains))
+            var serializationZones = DateTimeZoneProviders.Serialization.Ids.Where(tzId.Contains).ToArray();
+            if (serializationZones.Any())
             {
-                return DateTimeZoneProviders.Serialization.GetZoneOrNull(providerId);
+                return DateTimeZoneProviders.Serialization.GetZoneOrNull(serializationZones.First());
+            }
+
+            if (TimeZoneDisplayNameRegex.IsMatch(tzId))
+            {
+                var timeZone = GetSystemTimeZone(tzId);
+                if (timeZone == null)
+                {
+                    throw new ArgumentException($"The given timeZone display name is not found: {tzId}");
+                }
             }
 
             return LocalDateTimeZone;
@@ -182,5 +198,20 @@ namespace Ical.Net.Utility
         }
 
         public static bool IsSerializationTimeZone(DateTimeZone zone) => DateTimeZoneProviders.Serialization.GetZoneOrNull(zone.Id) != null;
+
+        /// <summary>
+        ///     Returns the <see cref="TimeZoneInfo"/> according to its display name. Bad way but Office365 provides only
+        ///     the timezone display name instead of the real the timeZoneId in their ics file.
+        /// </summary>
+        /// <param name="timeZoneDisplayName">
+        ///     The .NET timeZone display name which matches with the <see cref="TimeZoneInfo.DisplayName"/> property.
+        /// </param>
+        /// <returns>
+        ///     The timeZone matches with the given <paramref name="timeZoneDisplayName"/> or null if the it is not found.
+        /// </returns>
+        private static TimeZoneInfo GetSystemTimeZone(string timeZoneDisplayName)
+        {
+            return TimeZoneInfo.GetSystemTimeZones().SingleOrDefault(x => x.DisplayName == timeZoneDisplayName);
+        }
     }
 }
